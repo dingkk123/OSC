@@ -1,4 +1,4 @@
-# NYCU OSC
+# NYCU Operating System Capstone
 
 Course assignments and implementations for the **Operating Systems Capstone** course at NYCU.
 
