@@ -52,5 +52,6 @@ unsigned long get_memory_size(const void *fdt);
 void reserve_dtb(const void *fdt);
 void reserve_initrd(const void *fdt);
 void reserve_kernel_image(void);
-void reserve_fdt_reserved_memory(const void *fdt);
+void fdt_reserved_memory(const void *fdt, int startup);
+
 #endif

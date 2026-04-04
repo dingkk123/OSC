@@ -16,7 +16,7 @@ struct page {
     struct list_head node;
 };
 
-void buddy_init(void);
+void buddy_init(struct page *page_array, size_t num_pages, phys_addr_t base);
 void buddy_add_region(phys_addr_t base, size_t size);
 void memory_reserve(phys_addr_t base, size_t size);
 

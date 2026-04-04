@@ -1,6 +1,7 @@
 #include "fdt.h"
 #include "allocate.h"
-#include "allocate.h"
+#include "startup_alloc.h"
+
 
 static int kstrlen(const char *s) {
     int n = 0;
@@ -220,7 +221,7 @@ const void* fdt_getprop(const void* fdt,
     }
 }
 
-void reserve_fdt_reserved_memory(const void *fdt) {
+void fdt_reserved_memory(const void *fdt, int startup) {
     int rm_node = fdt_path_offset(fdt, "/reserved-memory");
     if (rm_node < 0)
         return;
@@ -256,14 +257,14 @@ void reserve_fdt_reserved_memory(const void *fdt) {
                     (const uint32_t *)fdt_getprop(fdt, child_off, "reg", &len);
 
                 if (reg != 0 && len >= 16) {
-                    unsigned long base =
-                        ((unsigned long)bswap32(reg[0]) << 32) |
-                        (unsigned long)bswap32(reg[1]);
-                    unsigned long size =
-                        ((unsigned long)bswap32(reg[2]) << 32) |
-                        (unsigned long)bswap32(reg[3]);
-
-                    memory_reserve(base, size);
+                    unsigned long base = ((unsigned long)bswap32(reg[0]) << 32) | (unsigned long)bswap32(reg[1]);
+                    unsigned long size = ((unsigned long)bswap32(reg[2]) << 32) | (unsigned long)bswap32(reg[3]);
+                    if(startup == 1){
+                        startup_reserve(base, size);
+                    }
+                    else{
+                        memory_reserve(base, size);
+                    }
                 }
             }
 
@@ -292,6 +293,7 @@ void reserve_fdt_reserved_memory(const void *fdt) {
         }
     }
 }
+
 
 unsigned long get_uart_base(const void *fdt) {
     int node = fdt_path_offset(fdt, "/soc/serial");

@@ -5,13 +5,13 @@
 #include <stdint.h>
 
 #define PAGE_SIZE (1UL << 12)
-#define NUM_POOLS 8
+#define NUM_POOLS 8 //8 different chunk size 
 
 struct chunk {
     struct list_head node;
 };
 
-struct chunk_pool {
+struct chunk_pool { 
     size_t chunk_size;
     struct list_head free_list;
 };
@@ -20,9 +20,9 @@ static size_t pool_sizes[NUM_POOLS] = {
     16, 32, 64, 128, 256, 512, 1024, 2048
 };
 
-static struct chunk_pool pools[NUM_POOLS];
+static struct chunk_pool pools[NUM_POOLS]; // fiexed array type of vector<chunk_pool> pools; pools.resize(NUM_POOLS);
 
-static int find_pool_idx(size_t size) {
+static int find_pool_idx(size_t size) { //find the suitable chunk size
     int i;
     for (i = 0; i < NUM_POOLS; i++) {
         if (size <= pool_sizes[i]) {
@@ -32,7 +32,7 @@ static int find_pool_idx(size_t size) {
     return -1;
 }
 
-static unsigned int size_to_order(size_t size) {
+static unsigned int size_to_order(size_t size) { //find the suitable chunk size
     size_t pages = (size + PAGE_SIZE - 1) / PAGE_SIZE;
     unsigned int order = 0;
     size_t n = 1;
@@ -45,6 +45,36 @@ static unsigned int size_to_order(size_t size) {
     return order;
 }
 
+/* address helpers
+phys_addr_t idx_to_phys(size_t idx) {
+    return buddy_base + idx * PAGE_SIZE;
+}
+
+void* page_to_ptr(struct page* pg) {
+    return (void*)idx_to_phys((size_t)(pg - mem_map));
+}
+
+size_t ptr_to_page_idx(void* ptr) {
+    unsigned long addr = (unsigned long)ptr;
+
+    if (addr < buddy_base) {
+        return (size_t)-1;
+    }
+
+    return (addr - buddy_base) / PAGE_SIZE;
+}
+
+struct page* ptr_to_page(void* ptr) {
+    size_t idx = ptr_to_page_idx(ptr);
+    if (idx == (size_t)-1 || idx >= total_pages) {
+        return 0;
+    }
+    return &mem_map[idx];
+}
+
+*/
+
+//log hepler
 static void log_alloc_chunk(unsigned long addr, size_t chunk_size) {
     uart_puts("[Chunk] Allocate ");
     uart_hex(addr);
@@ -61,6 +91,10 @@ static void log_free_chunk(unsigned long addr, size_t chunk_size) {
     uart_puts("\r\n");
 }
 
+// --------------------------------------------------
+// chunk init
+// --------------------------------------------------
+
 void kmem_init(void) {
     int i;
     for (i = 0; i < NUM_POOLS; i++) {
@@ -68,6 +102,10 @@ void kmem_init(void) {
         INIT_LIST_HEAD(&pools[i].free_list);
     }
 }
+
+// --------------------------------------------------
+// alloc & free
+// --------------------------------------------------
 
 static void refill_pool(int pool_idx) {
     struct page* pg = alloc_pages(0);
@@ -80,7 +118,7 @@ static void refill_pool(int pool_idx) {
     }
 
     chunk_size = pools[pool_idx].chunk_size;
-    page_base = page_to_ptr(pg);
+    page_base = page_to_ptr(pg); //to get the real address of page base
 
     pg->alloc_type = 2;
     pg->pool_idx = pool_idx;
@@ -124,18 +162,16 @@ void* allocate(size_t size) {
         }
     }
 
-    {
-        unsigned int order = size_to_order(size);
-        struct page* pg = alloc_pages(order);
+    unsigned int order = size_to_order(size);
+    struct page* pg = alloc_pages(order);
 
-        if (pg == 0) {
-            return 0;
-        }
-
-        pg->alloc_type = 1;
-        pg->pool_idx = -1;
-        return page_to_ptr(pg);
+    if (pg == 0) {
+        return 0;
     }
+
+    pg->alloc_type = 1;
+    pg->pool_idx = -1;
+    return page_to_ptr(pg);
 }
 
 void free(void* ptr) {

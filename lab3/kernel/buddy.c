@@ -4,22 +4,24 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define NUM_PAGES 0x280000
+
 #define MAX_ORDER 10
 #define PAGE_SIZE (1UL << 12)
 
 typedef unsigned long phys_addr_t;
 
-static struct page mem_map[NUM_PAGES];
-static struct list_head free_area[MAX_ORDER + 1];
+static struct page *mem_map = 0; //this pointer in the data seciton of buddy.c, but its address point to the page array, it also has to be reserved
+//because is allocate after compile
+static size_t total_pages = 0;
 static phys_addr_t buddy_base = 0;
+static struct list_head free_area[MAX_ORDER + 1];
+
 // --------------------------------------------------
 // address/index helpers
 // --------------------------------------------------
 
-// ===== CHANGED: 新增 helper，之後 base/index 換算都統一走這裡 =====
 static size_t page_to_idx(struct page* pg) {
-    return (size_t)(pg - mem_map);
+    return (size_t)(pg - mem_map); //beacuse the pg is struct page* , so the minus result will be the page index
 }
 
 phys_addr_t idx_to_phys(size_t idx) {
@@ -42,11 +44,15 @@ size_t ptr_to_page_idx(void* ptr) {
 
 struct page* ptr_to_page(void* ptr) {
     size_t idx = ptr_to_page_idx(ptr);
-    if (idx == (size_t)-1 || idx >= NUM_PAGES) {
+    if (idx == (size_t)-1 || idx >= total_pages) {
         return 0;
     }
     return &mem_map[idx];
 }
+
+// --------------------------------------------------
+// log
+// --------------------------------------------------
 
 static void log_block_range(size_t idx, unsigned int order) {
     uart_puts("Range of pages: [");
@@ -138,10 +144,20 @@ static void log_reserve(phys_addr_t base, size_t size, size_t start_idx, size_t 
     uart_puts(")\r\n");
 }
 
+/*
+struct page {
+    int order;         //offset=0
+    int refcount;      //offset=4
+    int is_free;       //offset=8 1=free in freearea(也有可能要split), 0=used or need to be spilt to use
+    int alloc_type;   // 0=free/unused, 1=page allocation, 2=chunk page       //offset=12
+    int pool_idx;     // chunk page 屬於哪個 pool，沒有就 -1        //offset=16
+    struct list_head node;       //offset=24
+};
+*/
 struct page* node_to_page(struct list_head* list_node) {
-    char* addr = (char*)list_node;
-    size_t off = offsetof(struct page, node);
-    return (struct page*)(addr - off);
+    char* addr = (char*)list_node; //chang the type to get the node addr
+    size_t off = offsetof(struct page, node); // probably is 24, because it got five int at front
+    return (struct page*)(addr - off); //to treat this address as a page
 }
 
 // --------------------------------------------------
@@ -160,7 +176,7 @@ struct page* get_buddy(struct page* page, unsigned int order) {
         buddy_idx = idx - block_size;
     }
 
-    if (buddy_idx >= NUM_PAGES)
+    if (buddy_idx >= total_pages)
         return 0;
 
     return &mem_map[buddy_idx];
@@ -178,25 +194,26 @@ int count_free_list(int order) {
 }
 
 // --------------------------------------------------
-// alloc / free
+// alloc
 // --------------------------------------------------
 
 struct page* alloc_pages(unsigned int order) {
-    if (order > MAX_ORDER) {
+    if (order > MAX_ORDER) { //over the limit
         return 0;
     }
 
     unsigned int cur_order = order;
-    while (cur_order <= MAX_ORDER && list_empty(&free_area[cur_order])) {
+    //only the free[cur_order] is not empty, it can be used.
+    while (cur_order <= MAX_ORDER && list_empty(&free_area[cur_order])) { 
         cur_order++;
     }
 
     if (cur_order > MAX_ORDER) {
         return 0;
     }
-
-    struct list_head* node = free_area[cur_order].next;
-    struct page* pg = node_to_page(node);
+    //get the free[cur_order] which is the head of 2^cur_order free area list
+    struct list_head* node = free_area[cur_order].next; //next is the real free area block
+    struct page* pg = node_to_page(node); //beacuse the node is in the struct of the page content
     log_remove_block(page_to_idx(pg), cur_order);
     list_del_init(node);
 
@@ -205,12 +222,11 @@ struct page* alloc_pages(unsigned int order) {
 
     while (cur_order > order) {
         cur_order--;
-
-        // ===== CHANGED: mem_map.data() -> mem_map =====
         size_t pg_idx = page_to_idx(pg);
-        size_t buddy_idx = pg_idx + (1U << cur_order);
+        size_t buddy_idx = pg_idx + (1U << cur_order); // to get the buddy block pg idx, beacuse freearea always record the left side buddy
         
         struct page* buddy = &mem_map[buddy_idx];
+        //deal with the buddy block page* content
         buddy->order = cur_order;
         buddy->is_free = 1;
         buddy->refcount = 0;
@@ -228,6 +244,10 @@ struct page* alloc_pages(unsigned int order) {
     return pg;
 }
 
+// --------------------------------------------------
+// free
+// --------------------------------------------------
+
 void free_pages(struct page* page) {
     if (page == 0)
         return;
@@ -237,8 +257,8 @@ void free_pages(struct page* page) {
     page->is_free = 1;
     
     while (page->order < MAX_ORDER) {
-        struct page* buddy = get_buddy(page, page->order);
-        if (buddy == 0 || buddy->is_free == 0 || buddy->order != page->order) {
+        struct page* buddy = get_buddy(page, page->order); // to get the buddy, so can check buddy's status, to decide whether they can merge to become bigger buddy
+        if (buddy == 0 || buddy->is_free == 0 || buddy->order != page->order) {//buddy is not exist || buddy is busy || buddy is not the same order
             break;
         }
         log_buddy_found(page_to_idx(page), page_to_idx(buddy), page->order);
@@ -261,20 +281,81 @@ void free_pages(struct page* page) {
     log_add_block(page_to_idx(page), page->order);
 }
 
+
+// --------------------------------------------------
+// init and add region into free_area
+// --------------------------------------------------
+//init the mem_map
+void buddy_init(struct page *page_array, size_t num_pages, phys_addr_t base) {
+    size_t i;
+
+    mem_map = page_array;
+    total_pages = num_pages;
+    buddy_base = base;
+
+    for (i = 0; i <= MAX_ORDER; i++) {
+        INIT_LIST_HEAD(&free_area[i]);
+    }
+
+    for (i = 0; i < total_pages; i++) {
+        mem_map[i].order = 0;
+        mem_map[i].refcount = 0;
+        mem_map[i].is_free = 0;
+        mem_map[i].alloc_type = 0;
+        mem_map[i].pool_idx = -1;
+        INIT_LIST_HEAD(&mem_map[i].node);
+    }
+}
+//init the free_area
+void buddy_add_region(phys_addr_t base, size_t size) {
+    size_t start_idx;
+    size_t end_idx;
+    size_t i;
+
+    buddy_base = base;
+
+    start_idx = 0;
+    end_idx = size / PAGE_SIZE;
+
+    if (end_idx > total_pages)
+        end_idx = total_pages;
+
+
+    // 先從大 block 塞進 free_area[MAX_ORDER]
+    for (i = start_idx; i + (1U << MAX_ORDER) <= end_idx; i += (1U << MAX_ORDER)) {
+        mem_map[i].order = MAX_ORDER;
+        mem_map[i].refcount = 0;
+        mem_map[i].is_free = 1;
+        INIT_LIST_HEAD(&mem_map[i].node);
+        list_add_tail(&mem_map[i].node, &free_area[MAX_ORDER]);
+        log_add_block(i, MAX_ORDER);
+    }
+
+    // 剩下不滿 MAX_ORDER 的尾巴，簡單先用 order 0 補
+    while (i < end_idx) {
+        mem_map[i].order = 0;
+        mem_map[i].refcount = 0;
+        mem_map[i].is_free = 1;
+        INIT_LIST_HEAD(&mem_map[i].node);
+        list_add_tail(&mem_map[i].node, &free_area[0]);
+        log_add_block(i, 0);
+        i++;
+    }
+}
+
 // --------------------------------------------------
 // reserve
 // --------------------------------------------------
 
 void memory_reserve(phys_addr_t base, size_t size) {
-    // ===== CHANGED: 改成用 buddy_base 算 index，不再直接 base / PAGE_SIZE =====
     if (size == 0) return;
-    if (base < buddy_base) return;
+    if (base < buddy_base) return; // buddy_base would be given value when buddy_init
 
     size_t start_idx = (base - buddy_base) / PAGE_SIZE;
     size_t end_idx = (base - buddy_base + size + PAGE_SIZE - 1) / PAGE_SIZE;
 
-    if (start_idx >= NUM_PAGES) return;
-    if (end_idx > NUM_PAGES) end_idx = NUM_PAGES;
+    if (start_idx >= total_pages) return;
+    if (end_idx > total_pages) end_idx = total_pages;
     log_reserve(base, size, start_idx, end_idx);
 
     for (int order = MAX_ORDER; order >= 0; order--) {
@@ -304,7 +385,7 @@ void memory_reserve(phys_addr_t base, size_t size) {
                 pg->refcount = 1;
             }
             // case3 : partial overlap
-            else {
+            else { // split to two block and let the after loop to check
                 if (order > 0) {
                     size_t half = block_pages_num / 2;
                     struct page* left = pg;
@@ -334,67 +415,6 @@ void memory_reserve(phys_addr_t base, size_t size) {
 
             cur = next;
         }
-    }
-}
-
-// --------------------------------------------------
-// init
-// --------------------------------------------------
-
-// ===== CHANGED: 新增 buddy_init()，只做初始化，不直接加 region =====
-void buddy_init(void) {
-    size_t i;
-
-    for (i = 0; i <= MAX_ORDER; i++) {
-        INIT_LIST_HEAD(&free_area[i]);
-    }
-
-    for (i = 0; i < NUM_PAGES; i++) {
-        mem_map[i].order = 0;
-        mem_map[i].refcount = 0;
-        mem_map[i].is_free = 0;
-        mem_map[i].alloc_type = 0;
-        mem_map[i].pool_idx = -1;
-        INIT_LIST_HEAD(&mem_map[i].node);
-    }
-}
-
-// ===== CHANGED: 新增 buddy_add_region(base, size) =====
-// 用來把某段 usable physical memory 加到 buddy 裡
-void buddy_add_region(phys_addr_t base, size_t size) {
-    size_t start_idx;
-    size_t end_idx;
-    size_t i;
-
-    // 第一次加 region 時，記住 base
-    // 這版先假設你只管理一段連續記憶體
-    buddy_base = base;
-
-    start_idx = 0;
-    end_idx = size / PAGE_SIZE;
-
-    if (end_idx > NUM_PAGES)
-        end_idx = NUM_PAGES;
-
-    // 先從大 block 塞進 free_area[MAX_ORDER]
-    for (i = start_idx; i + (1U << MAX_ORDER) <= end_idx; i += (1U << MAX_ORDER)) {
-        mem_map[i].order = MAX_ORDER;
-        mem_map[i].refcount = 0;
-        mem_map[i].is_free = 1;
-        INIT_LIST_HEAD(&mem_map[i].node);
-        list_add_tail(&mem_map[i].node, &free_area[MAX_ORDER]);
-        log_add_block(i, MAX_ORDER);
-    }
-
-    // 剩下不滿 MAX_ORDER 的尾巴，簡單先用 order 0 補
-    while (i < end_idx) {
-        mem_map[i].order = 0;
-        mem_map[i].refcount = 0;
-        mem_map[i].is_free = 1;
-        INIT_LIST_HEAD(&mem_map[i].node);
-        list_add_tail(&mem_map[i].node, &free_area[0]);
-        log_add_block(i, 0);
-        i++;
     }
 }
 
@@ -441,7 +461,7 @@ void wait_enter(void) {
     }
 }
 
-// ===== CHANGED: 新增簡單 kernel test =====
+/*
 void test_buddy(void) {
     struct page* p1;
     struct page* p2;
@@ -505,3 +525,4 @@ void test_buddy(void) {
 
     uart_puts("=== buddy test end ===\r\n");
 }
+*/

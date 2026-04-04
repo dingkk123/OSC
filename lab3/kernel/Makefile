@@ -4,7 +4,7 @@ LD = $(RISCV_GNU)-ld
 OBJCOPY = $(RISCV_GNU)-objcopy
 CFLAGS = -mcmodel=medany -fno-pie -ffreestanding -nostdlib -g -Wall
 QEMU ?= qemu-system-riscv64
-TARGET = test_kernel
+TARGET = kernel
 
 build: clean
 	$(CC) $(CFLAGS) -c *.S *.c
