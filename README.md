@@ -7,7 +7,7 @@ Course assignments and implementations for the **Operating Systems Capstone** co
 - `lab0` - Environment Setup and Cross-compilation
 - `lab1` - Bare-metal Programming and UART
 - `lab2` - Bootloader and Kernel Loading
-- `lab3` - Memory Allocation and Buddy System *(in progress)*
+- `lab3` - Memory Allocation and Buddy System
 
 ## Topics Covered
 
