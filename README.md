@@ -37,4 +37,4 @@ This repository contains operating systems labs focused on low-level system prog
 
 ## Note
 
-This repository is still being updated as the course progresses, and `lab3` is currently under development.
+This repository is still being updated as the course progresses.
