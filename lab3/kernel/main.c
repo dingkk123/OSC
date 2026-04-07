@@ -285,6 +285,26 @@ void test_reserve_full(void) {
 }
 */
 
+void test_kmalloc_chunk_page_reclaim(void) {
+    void *a, *b;
+
+    uart_puts("=== kmalloc chunk reclaim test start ===\r\n");
+
+    a = allocate(32);
+    b = allocate(32);
+
+    uart_puts("allocated a and b\r\n");
+
+    free(a);
+    uart_puts("freed a\r\n");
+
+    free(b);
+    uart_puts("freed b\r\n");
+
+    uart_puts("=== kmalloc chunk reclaim test end ===\r\n");
+}
+
+
 void start_kernel(void *fdt) {
     unsigned long new_uart = get_uart_base(fdt);
     unsigned long initrd_start = get_initrd_start(fdt);
@@ -376,7 +396,8 @@ void start_kernel(void *fdt) {
 
     kmem_init();
     test_alloc_1();
-    test_kmalloc();
+    //test_kmalloc();
+    //test_kmalloc_chunk_page_reclaim();
     //test_reserve_simple();
     //test_reserve_full();
     uart_puts("FRAME_ARRAY = ");

@@ -165,7 +165,6 @@ struct page* node_to_page(struct list_head* list_node) {
 // --------------------------------------------------
 
 struct page* get_buddy(struct page* page, unsigned int order) {
-    // 這裡先保留你原本邏輯，不大改
     size_t idx = page_to_idx(page);
     size_t block_size = 1U << order;
     size_t buddy_idx;

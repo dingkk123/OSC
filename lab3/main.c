@@ -187,7 +187,7 @@ void start_kernel(void *fdt) {
             
             if(buf[0] == '\0'){}
             else if(str_equal(buf, "hello")){
-                uart_puts("Hello world.");
+                uart_puts("Hello world.\r\n");
             }
             else if(str_equal(buf, "help")){
                 uart_puts("Available commands:\r\n");

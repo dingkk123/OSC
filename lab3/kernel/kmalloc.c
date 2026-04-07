@@ -91,6 +91,15 @@ static void log_free_chunk(unsigned long addr, size_t chunk_size) {
     uart_puts("\r\n");
 }
 
+static void log_release_chunk_page(unsigned long addr, size_t chunk_size) {
+    uart_puts("[Chunk to page] All chunks returned, release page ");
+    uart_hex(addr);
+    uart_puts(" of chunk size ");
+    uart_put_dec(chunk_size);
+    uart_puts("\r\n");
+}
+
+
 // --------------------------------------------------
 // chunk init
 // --------------------------------------------------
@@ -123,7 +132,7 @@ static void refill_pool(int pool_idx) {
     pg->alloc_type = 2;
     pg->pool_idx = pool_idx;
     pg->order = 0;
-    pg->refcount = 1;
+    pg->refcount = 0;
     pg->is_free = 0;
 
     while (offset + chunk_size <= PAGE_SIZE) {
@@ -157,6 +166,8 @@ void* allocate(size_t size) {
             list_del_init(node);
 
             struct chunk* ck = (struct chunk*)node;
+            struct page* pg = ptr_to_page((void*)ck);
+            pg->refcount++;
             log_alloc_chunk((unsigned long)ck, pools[pool_idx].chunk_size);
             return (void*)ck;
         }
@@ -168,10 +179,26 @@ void* allocate(size_t size) {
     if (pg == 0) {
         return 0;
     }
-
+    
     pg->alloc_type = 1;
     pg->pool_idx = -1;
+    
     return page_to_ptr(pg);
+}
+
+static void remove_page_with_chunk(struct page* pg){
+    int pool_idx = pg->pool_idx;
+    size_t chunk_size = pools[pool_idx].chunk_size;
+    void* page_base = page_to_ptr(pg);
+    size_t offset = 0;
+
+    while(offset + chunk_size <= PAGE_SIZE) {
+        struct chunk* ck = (struct chunk*)((char*)page_base + offset);
+        if(list_empty(&ck->node) != 1){
+            list_del_init(&ck->node);
+        }
+        offset += chunk_size;
+    }
 }
 
 void free(void* ptr) {
@@ -192,7 +219,20 @@ void free(void* ptr) {
 
         INIT_LIST_HEAD(&ck->node);
         list_add_tail(&ck->node, &pools[pool_idx].free_list);
+
+        if(pg->refcount > 0){
+            pg->refcount--;
+        }
+
         log_free_chunk((unsigned long)ptr, pools[pool_idx].chunk_size);
+        
+        if(pg->refcount == 0){
+            log_release_chunk_page((unsigned long)ptr, pools[pool_idx].chunk_size);
+            remove_page_with_chunk(pg);
+            pg->alloc_type = 0;
+            pg->pool_idx = -1;
+            free_pages(pg);
+        }         
         return;
     }
 
