@@ -115,7 +115,3 @@ Implemented components include:
 - Framebuffer device file at `/dev/fb`
 - `lseek64` and `ioctl` support for framebuffer access
 - User pointer translation for framebuffer `ioctl`
-
-## Note
-
-This repository is still being updated as the course progresses.
